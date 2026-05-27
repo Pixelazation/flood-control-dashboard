@@ -134,6 +134,13 @@ const METRICS = {
     description:
       "Cost/Damage Ratio = if damage > cost: -(damage / cost), else cost / damage.",
   },
+  monetaryGap: {
+    key: "Monetary_Delta",
+    label: "Monetary Gap",
+    shortLabel: "Monetary Gap",
+    description:
+      "Monetary Gap = flood funding minus typhoon damage (PHP). Negative means underfunded.",
+  },
   damage: {
     key: "Total_Damage_PhP",
     label: "Typhoon Damage",
@@ -228,6 +235,7 @@ const resolveYearlyValue = (row, keys) => {
 const MapToggle = ({ value, onChange, variant = "full" }) => {
   const options = [
     { id: "gap", label: METRICS.gap.shortLabel },
+    { id: "monetaryGap", label: METRICS.monetaryGap.shortLabel },
     { id: "moneyGap", label: METRICS.moneyGap.shortLabel },
     { id: "damage", label: METRICS.damage.shortLabel },
     { id: "funding", label: METRICS.funding.shortLabel },
@@ -243,7 +251,9 @@ const MapToggle = ({ value, onChange, variant = "full" }) => {
           onClick={() => onChange(option.id)}
           aria-pressed={value === option.id}
         >
-          {option.id === "gap" || option.id === "moneyGap" ? (
+          {option.id === "gap" ||
+          option.id === "moneyGap" ||
+          option.id === "monetaryGap" ? (
             <span className="toggle-with-info">
               {option.label}
               <span
@@ -265,6 +275,19 @@ const MapToggle = ({ value, onChange, variant = "full" }) => {
 
 const Legend = ({ metric }) => {
   if (metric === "gap") {
+    return (
+      <div className="legend-block">
+        <div className="legend-title">{METRICS[metric].label}</div>
+        <div className="legend-bar legend-gap"></div>
+        <div className="legend-labels">
+          <span>Underfunded</span>
+          <span>Balanced</span>
+          <span>Overfunded</span>
+        </div>
+      </div>
+    );
+  }
+  if (metric === "monetaryGap") {
     return (
       <div className="legend-block">
         <div className="legend-title">{METRICS[metric].label}</div>
@@ -433,6 +456,13 @@ function App() {
               ? damage > funding
                 ? -(damage / funding)
                 : funding / damage
+              : null;
+          next.Monetary_Delta =
+            funding !== null &&
+            funding !== undefined &&
+            damage !== null &&
+            damage !== undefined
+              ? funding - damage
               : null;
           return next;
         });
@@ -660,7 +690,7 @@ function App() {
       .filter((value) => Number.isFinite(value));
     if (!values.length) return null;
 
-    if (selectedMetric === "gap") {
+    if (selectedMetric === "gap" || selectedMetric === "monetaryGap") {
       const min = d3.min(values) ?? 0;
       const max = d3.max(values) ?? 0;
       const maxAbs = Math.max(Math.abs(min), Math.abs(max)) || 1;
@@ -804,6 +834,11 @@ function App() {
     if (selectedMetric === "moneyGap") {
       return metricValue !== null
         ? `${metricValue.toFixed(2)}x`
+        : "No data available";
+    }
+    if (selectedMetric === "monetaryGap") {
+      return metricValue !== null
+        ? formatBillions(metricValue)
         : "No data available";
     }
     return formatBillions(metricValue);
