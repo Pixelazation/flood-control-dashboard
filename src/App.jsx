@@ -175,18 +175,18 @@ const scoreToVerdict = (score) => {
     };
   }
   if (score <= -40) {
-    return { label: "Critically Underfunded", className: "badge-critical" };
+    return { label: "Most Likely Underfunded", className: "badge-critical" };
   }
   if (score <= -15) {
-    return { label: "Underfunded", className: "badge-warning" };
+    return { label: "Possibly Underfunded", className: "badge-warning" };
   }
   if (score <= 15) {
-    return { label: "Roughly Balanced", className: "badge-neutral" };
+    return { label: "Balanced", className: "badge-neutral" };
   }
   if (score <= 40) {
-    return { label: "Overfunded", className: "badge-info" };
+    return { label: "Possibly Overfunded", className: "badge-info" };
   }
-  return { label: "Significantly Overfunded", className: "badge-strong" };
+  return { label: "Most Likely Overfunded", className: "badge-strong" };
 };
 
 const buildVerdictSentence = (row) => {
