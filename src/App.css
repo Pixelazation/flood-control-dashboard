@@ -191,6 +191,20 @@
   width: 100%;
   height: auto;
   display: block;
+  touch-action: none;
+  cursor: grab;
+}
+
+.map-svg:active {
+  cursor: grabbing;
+}
+
+.map-svg.is-dragging {
+  cursor: grabbing;
+}
+
+.map-svg.is-dragging .map-province {
+  pointer-events: none;
 }
 
 .map-province {
@@ -199,6 +213,23 @@
     opacity 0.2s ease,
     stroke 0.2s ease;
   cursor: pointer;
+  stroke: #f7f4ef;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.map-province:hover {
+  stroke: #ffffff;
+  stroke-width: 2;
+}
+
+.map-province.is-dimmed {
+  opacity: 0.3;
+}
+
+.region-border {
+  pointer-events: none;
+  vector-effect: non-scaling-stroke;
 }
 
 .map-tooltip {
@@ -211,6 +242,13 @@
   font-size: 12px;
   box-shadow: var(--shadow-soft);
   min-width: 160px;
+  opacity: 0;
+  transform: translate(-9999px, -9999px);
+  transition: opacity 0.15s ease;
+}
+
+.map-tooltip.is-visible {
+  opacity: 1;
 }
 
 .tooltip-title {

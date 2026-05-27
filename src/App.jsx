@@ -329,6 +329,14 @@ const MiniChart = ({ data }) => {
 
 function App() {
   const mapWrapRef = useRef(null);
+  const svgRef = useRef(null);
+  const mapLayerRef = useRef(null);
+  const zoomBehaviorRef = useRef(null);
+  const tooltipRef = useRef(null);
+  const tooltipFrameRef = useRef(null);
+  const tooltipPosRef = useRef({ x: -9999, y: -9999 });
+  const hoveredProvinceRef = useRef(null);
+  const isDraggingRef = useRef(false);
   const [selectedMetric, setSelectedMetric] = useState("gap");
   const [provinceFeatures, setProvinceFeatures] = useState([]);
   const [regionFeatures, setRegionFeatures] = useState([]);
@@ -336,10 +344,12 @@ function App() {
   const [yearlyRows, setYearlyRows] = useState([]);
   const [yearlyStatus, setYearlyStatus] = useState("idle");
   const [selectedProvince, setSelectedProvince] = useState(null);
-  const [hoveredProvince, setHoveredProvince] = useState(null);
-  const [tooltip, setTooltip] = useState({ visible: false });
+  const [tooltipContent, setTooltipContent] = useState({
+    visible: false,
+    name: "",
+    value: "",
+  });
   const [regionFilter, setRegionFilter] = useState("All Regions");
-  const [mapTransform, setMapTransform] = useState({ k: 1, x: 0, y: 0 });
   const [loadError, setLoadError] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -495,10 +505,68 @@ function App() {
     return Array.from(new Set(names)).sort();
   }, [regionFeatures]);
 
+  const provinceGeometry = useMemo(() => {
+    if (!pathGenerator) return [];
+    return provinceFeatures.map((feature) => {
+      const name = feature.properties?.province_name || "Unknown";
+      const regionName = feature.properties?.region_name || "";
+      const normalized = normalizeName(name);
+      return {
+        id: normalized,
+        name,
+        regionName,
+        path: pathGenerator(feature),
+      };
+    });
+  }, [pathGenerator, provinceFeatures]);
+
+  const regionGeometry = useMemo(() => {
+    if (!pathGenerator) return [];
+    return regionFeatures.map((feature, index) => ({
+      id: feature.properties?.region_name || `region-${index}`,
+      path: pathGenerator(feature),
+    }));
+  }, [pathGenerator, regionFeatures]);
+
   useEffect(() => {
-    if (!pathGenerator) return;
+    if (!svgRef.current || !mapLayerRef.current) return;
+    const svg = d3.select(svgRef.current);
+    const zoomBehavior = d3
+      .zoom()
+      .scaleExtent([1, 6])
+      .on("start", () => {
+        isDraggingRef.current = true;
+        svg.classed("is-dragging", true);
+        setTooltipContent((prev) =>
+          prev.visible ? { ...prev, visible: false } : prev,
+        );
+      })
+      .on("end", () => {
+        window.setTimeout(() => {
+          isDraggingRef.current = false;
+          svg.classed("is-dragging", false);
+        }, 0);
+      })
+      .on("zoom", (event) => {
+        d3.select(mapLayerRef.current).attr("transform", event.transform);
+      });
+
+    zoomBehaviorRef.current = zoomBehavior;
+    svg.call(zoomBehavior);
+
+    return () => {
+      svg.on(".zoom", null);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!pathGenerator || !zoomBehaviorRef.current || !svgRef.current) return;
+    const svg = d3.select(svgRef.current);
     if (regionFilter === "All Regions") {
-      setMapTransform({ k: 1, x: 0, y: 0 });
+      svg
+        .transition()
+        .duration(600)
+        .call(zoomBehaviorRef.current.transform, d3.zoomIdentity);
       return;
     }
     const target = regionFeatures.find(
@@ -512,7 +580,11 @@ function App() {
     const scale = Math.min(MAP_WIDTH / dx, MAP_HEIGHT / dy) * 0.92;
     const x = MAP_WIDTH / 2 - ((bounds[0][0] + bounds[1][0]) / 2) * scale;
     const y = MAP_HEIGHT / 2 - ((bounds[0][1] + bounds[1][1]) / 2) * scale;
-    setMapTransform({ k: scale, x, y });
+    const transform = d3.zoomIdentity.translate(x, y).scale(scale);
+    svg
+      .transition()
+      .duration(700)
+      .call(zoomBehaviorRef.current.transform, transform);
   }, [pathGenerator, regionFeatures, regionFilter]);
 
   const gapRanks = useMemo(() => {
@@ -583,37 +655,31 @@ function App() {
   }, [provinceRows, selectedMetric]);
 
   const provinces = useMemo(() => {
-    if (!pathGenerator) return [];
-    return provinceFeatures.map((feature) => {
-      const name = feature.properties?.province_name || "Unknown";
-      const regionName = feature.properties?.region_name || "";
-      const normalized = normalizeName(name);
-      const row = provinceDataMap.get(normalized);
-      const metricKey = METRICS[selectedMetric].key;
+    if (!provinceGeometry.length) return [];
+    const metricKey = METRICS[selectedMetric].key;
+    return provinceGeometry.map((province) => {
+      const row = provinceDataMap.get(province.id);
       const metricValue = row ? row[metricKey] : null;
-      const isNoData = normalized === "basilan" || !row || metricValue === null;
+      const isNoData =
+        province.id === "basilan" || !row || metricValue === null;
       const fill = isNoData
         ? "url(#no-data-hatch)"
         : metricScale
           ? metricScale(metricValue)
           : "#E0E0E0";
       const dimmed =
-        regionFilter !== "All Regions" && regionName !== regionFilter;
+        regionFilter !== "All Regions" && province.regionName !== regionFilter;
 
       return {
-        id: normalized,
-        name,
-        regionName,
+        ...province,
         row,
-        path: pathGenerator(feature),
         fill,
         dimmed,
         isNoData,
       };
     });
   }, [
-    pathGenerator,
-    provinceFeatures,
+    provinceGeometry,
     provinceDataMap,
     selectedMetric,
     metricScale,
@@ -676,30 +742,70 @@ function App() {
     });
   };
 
-  const handleBackgroundClick = () => {
+  const handleBackgroundClick = (event) => {
+    if (event?.defaultPrevented || isDraggingRef.current) return;
     setSelectedProvince(null);
   };
 
-  const handleMouseMove = (event, province) => {
-    if (!mapWrapRef.current) return;
-    const rect = mapWrapRef.current.getBoundingClientRect();
+  const getTooltipValue = (province) => {
     const metricKey = METRICS[selectedMetric].key;
     const metricValue = province.row ? province.row[metricKey] : null;
-    const valueText = province.isNoData
-      ? "No data available"
-      : selectedMetric === "gap"
-        ? metricValue !== null
-          ? `${metricValue.toFixed(1)}`
-          : "No data available"
-        : formatBillions(metricValue);
-    setTooltip({
+    if (province.isNoData) return "No data available";
+    if (selectedMetric === "gap") {
+      return metricValue !== null
+        ? `${metricValue.toFixed(1)}`
+        : "No data available";
+    }
+    return formatBillions(metricValue);
+  };
+
+  const handleMouseEnter = (province, event) => {
+    if (isDraggingRef.current) return;
+    hoveredProvinceRef.current = province;
+    setTooltipContent({
       visible: true,
+      name: province.name,
+      value: getTooltipValue(province),
+    });
+    if (event) {
+      handleMouseMove(event);
+    }
+  };
+
+  const handleMouseLeave = () => {
+    hoveredProvinceRef.current = null;
+    if (!isDraggingRef.current) {
+      setTooltipContent((prev) => ({ ...prev, visible: false }));
+    }
+  };
+
+  const handleMouseMove = (event) => {
+    if (isDraggingRef.current) return;
+    if (!mapWrapRef.current || !tooltipRef.current) return;
+    const rect = mapWrapRef.current.getBoundingClientRect();
+    tooltipPosRef.current = {
       x: event.clientX - rect.left + 12,
       y: event.clientY - rect.top + 12,
-      name: province.name,
-      value: valueText,
+    };
+    if (tooltipFrameRef.current) return;
+    tooltipFrameRef.current = window.requestAnimationFrame(() => {
+      const next = tooltipPosRef.current;
+      if (tooltipRef.current) {
+        tooltipRef.current.style.transform = `translate(${next.x}px, ${next.y}px)`;
+      }
+      tooltipFrameRef.current = null;
     });
   };
+
+  useEffect(() => {
+    if (!tooltipContent.visible || !hoveredProvinceRef.current) return;
+    const province = hoveredProvinceRef.current;
+    setTooltipContent({
+      visible: true,
+      name: province.name,
+      value: getTooltipValue(province),
+    });
+  }, [selectedMetric]);
 
   const detailRow = selectedProvince?.row;
   const detailScore = detailRow?.Disparity_Index ?? null;
@@ -785,6 +891,7 @@ function App() {
 
           <div className="map-shell" ref={mapWrapRef}>
             <svg
+              ref={svgRef}
               viewBox={`0 0 ${MAP_WIDTH} ${MAP_HEIGHT}`}
               onClick={handleBackgroundClick}
               className="map-svg"
@@ -801,37 +908,28 @@ function App() {
                 </pattern>
               </defs>
               <rect width={MAP_WIDTH} height={MAP_HEIGHT} fill="#F6F1E8" />
-              <g
-                transform={`translate(${mapTransform.x}, ${mapTransform.y}) scale(${mapTransform.k})`}
-              >
+              <g ref={mapLayerRef}>
                 {provinces.map((province) => (
                   <path
                     key={province.id}
                     d={province.path}
                     data-province={province.id}
-                    className="map-province"
+                    className={`map-province ${province.dimmed ? "is-dimmed" : ""}`}
                     fill={province.fill}
-                    stroke={
-                      hoveredProvince === province.id ? "#FFFFFF" : "#F7F4EF"
-                    }
-                    strokeWidth={hoveredProvince === province.id ? 2 : 1}
-                    style={{ opacity: province.dimmed ? 0.3 : 1 }}
-                    onMouseEnter={() => setHoveredProvince(province.id)}
-                    onMouseLeave={() => {
-                      setHoveredProvince(null);
-                      setTooltip({ visible: false });
-                    }}
-                    onMouseMove={(event) => handleMouseMove(event, province)}
+                    onMouseEnter={(event) => handleMouseEnter(province, event)}
+                    onMouseLeave={handleMouseLeave}
+                    onMouseMove={handleMouseMove}
                     onClick={(event) => {
                       event.stopPropagation();
                       handleProvinceClick(province);
                     }}
                   />
                 ))}
-                {regionFeatures.map((feature) => (
+                {regionGeometry.map((feature) => (
                   <path
-                    key={feature.properties?.region_name}
-                    d={pathGenerator(feature)}
+                    key={feature.id}
+                    d={feature.path}
+                    className="region-border"
                     fill="none"
                     stroke="rgba(255, 255, 255, 0.5)"
                     strokeWidth={1}
@@ -839,17 +937,15 @@ function App() {
                 ))}
               </g>
             </svg>
-            {tooltip.visible && (
-              <div
-                className="map-tooltip"
-                style={{ left: tooltip.x, top: tooltip.y }}
-              >
-                <div className="tooltip-title">{tooltip.name}</div>
-                <div className="tooltip-value">
-                  {METRICS[selectedMetric].label}: {tooltip.value}
-                </div>
+            <div
+              ref={tooltipRef}
+              className={`map-tooltip ${tooltipContent.visible ? "is-visible" : ""}`}
+            >
+              <div className="tooltip-title">{tooltipContent.name}</div>
+              <div className="tooltip-value">
+                {METRICS[selectedMetric].label}: {tooltipContent.value}
               </div>
-            )}
+            </div>
           </div>
 
           <div className="map-hint">
