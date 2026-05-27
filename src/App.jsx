@@ -127,6 +127,13 @@ const METRICS = {
     description:
       "Funding Gap Score = funding rank minus damage rank. Negative means underfunded.",
   },
+  moneyGap: {
+    key: "Monetary_Gap",
+    label: "Cost/Damage Ratio",
+    shortLabel: "Cost/Damage Ratio",
+    description:
+      "Cost/Damage Ratio = if damage > cost: -(damage / cost), else cost / damage.",
+  },
   damage: {
     key: "Total_Damage_PhP",
     label: "Typhoon Damage",
@@ -221,6 +228,7 @@ const resolveYearlyValue = (row, keys) => {
 const MapToggle = ({ value, onChange, variant = "full" }) => {
   const options = [
     { id: "gap", label: METRICS.gap.shortLabel },
+    { id: "moneyGap", label: METRICS.moneyGap.shortLabel },
     { id: "damage", label: METRICS.damage.shortLabel },
     { id: "funding", label: METRICS.funding.shortLabel },
   ];
@@ -235,13 +243,13 @@ const MapToggle = ({ value, onChange, variant = "full" }) => {
           onClick={() => onChange(option.id)}
           aria-pressed={value === option.id}
         >
-          {option.id === "gap" ? (
+          {option.id === "gap" || option.id === "moneyGap" ? (
             <span className="toggle-with-info">
               {option.label}
               <span
                 className="info-dot"
-                title={METRICS.gap.description}
-                aria-label="Funding Gap Score information"
+                title={METRICS[option.id].description}
+                aria-label={`${METRICS[option.id].label} information`}
               >
                 ?
               </span>
@@ -259,12 +267,25 @@ const Legend = ({ metric }) => {
   if (metric === "gap") {
     return (
       <div className="legend-block">
-        <div className="legend-title">Funding Gap Score</div>
+        <div className="legend-title">{METRICS[metric].label}</div>
         <div className="legend-bar legend-gap"></div>
         <div className="legend-labels">
           <span>Underfunded</span>
           <span>Balanced</span>
           <span>Overfunded</span>
+        </div>
+      </div>
+    );
+  }
+  if (metric === "moneyGap") {
+    return (
+      <div className="legend-block">
+        <div className="legend-title">{METRICS[metric].label}</div>
+        <div className="legend-bar legend-gap"></div>
+        <div className="legend-labels">
+          <span>Negative</span>
+          <span>Balanced</span>
+          <span>Positive</span>
         </div>
       </div>
     );
@@ -400,6 +421,19 @@ function App() {
           numericColumns.forEach((key) => {
             next[key] = parseNumber(row[key]);
           });
+          const funding = next.ABC;
+          const damage = next.Total_Damage_PhP;
+          next.Monetary_Gap =
+            funding !== null &&
+            funding !== undefined &&
+            funding > 0 &&
+            damage !== null &&
+            damage !== undefined &&
+            damage > 0
+              ? damage > funding
+                ? -(damage / funding)
+                : funding / damage
+              : null;
           return next;
         });
 
@@ -623,7 +657,7 @@ function App() {
     const metricKey = METRICS[selectedMetric].key;
     const values = provinceRows
       .map((row) => row[metricKey])
-      .filter((value) => value !== null && value !== undefined);
+      .filter((value) => Number.isFinite(value));
     if (!values.length) return null;
 
     if (selectedMetric === "gap") {
@@ -633,6 +667,17 @@ function App() {
       return d3
         .scaleDiverging()
         .domain([-maxAbs, 0, maxAbs])
+        .interpolator(
+          d3.interpolateRgbBasis(["#C0392B", "#F0F0F0", "#2471A3"]),
+        );
+    }
+
+    if (selectedMetric === "moneyGap") {
+      const maxAbs = 10;
+      return d3
+        .scaleDiverging()
+        .domain([-maxAbs, 0, maxAbs])
+        .clamp(true)
         .interpolator(
           d3.interpolateRgbBasis(["#C0392B", "#F0F0F0", "#2471A3"]),
         );
@@ -754,6 +799,11 @@ function App() {
     if (selectedMetric === "gap") {
       return metricValue !== null
         ? `${metricValue.toFixed(1)}`
+        : "No data available";
+    }
+    if (selectedMetric === "moneyGap") {
+      return metricValue !== null
+        ? `${metricValue.toFixed(2)}x`
         : "No data available";
     }
     return formatBillions(metricValue);
