@@ -203,6 +203,78 @@ const scoreToVerdict = (score) => {
   return { label: "Most Likely Overfunded", className: "badge-strong" };
 };
 
+const moneyGapToVerdict = (value) => {
+  if (!Number.isFinite(value)) {
+    return { label: "No data", className: "badge-neutral" };
+  }
+  const nearBalance = Math.abs(Math.abs(value) - 1) <= 0.1;
+  if (nearBalance) {
+    return { label: "Balanced", className: "badge-neutral" };
+  }
+  return value < 0
+    ? { label: "Damage > Cost", className: "badge-critical" }
+    : { label: "Cost > Damage", className: "badge-info" };
+};
+
+const monetaryGapToVerdict = (value, damage) => {
+  if (!Number.isFinite(value)) {
+    return { label: "No data", className: "badge-neutral" };
+  }
+  const tolerance = Number.isFinite(damage) ? Math.abs(damage) * 0.1 : 0;
+  if (Math.abs(value) <= tolerance) {
+    return { label: "Balanced", className: "badge-neutral" };
+  }
+  return value < 0
+    ? { label: "Underfunded", className: "badge-critical" }
+    : { label: "Overfunded", className: "badge-strong" };
+};
+
+const metricToVerdict = (metric, value, row, bands) => {
+  if (metric === "gap") {
+    return scoreToVerdict(value);
+  }
+  if (metric === "moneyGap") {
+    return moneyGapToVerdict(value);
+  }
+  if (metric === "monetaryGap") {
+    return monetaryGapToVerdict(value, row?.Total_Damage_PhP ?? null);
+  }
+  if (metric === "damage" || metric === "funding") {
+    const band = bands?.[metric];
+    if (!band || !Number.isFinite(value)) {
+      return { label: "No data", className: "badge-neutral" };
+    }
+    if (value <= band.low) {
+      return { label: "Low", className: "badge-neutral" };
+    }
+    if (value <= band.high) {
+      return { label: "Moderate", className: "badge-warning" };
+    }
+    return { label: "High", className: "badge-strong" };
+  }
+  return { label: "No data", className: "badge-neutral" };
+};
+
+const buildRatioSentence = (row) => {
+  if (!row) {
+    return "This province does not have enough data for a ratio assessment.";
+  }
+  const damage = row.Total_Damage_PhP;
+  const funding = row.ABC;
+  if (
+    !Number.isFinite(damage) ||
+    !Number.isFinite(funding) ||
+    funding <= 0 ||
+    damage <= 0
+  ) {
+    return "Damage or cost data are incomplete, so the ratio assessment is limited.";
+  }
+  if (damage > funding) {
+    return `Damage is ${(damage / funding).toFixed(2)}x the project costs.`;
+  }
+  return `Project costs are ${(funding / damage).toFixed(2)}x the damage.`;
+};
+
 const buildVerdictSentence = (row) => {
   if (!row) {
     return "This province does not have enough data for a funding gap assessment.";
@@ -729,6 +801,25 @@ function App() {
       .interpolator(d3.interpolateRgb("#E9F7EF", "#1E8449"));
   }, [provinceRows, selectedMetric]);
 
+  const metricBands = useMemo(() => {
+    const buildBands = (key) => {
+      const values = provinceRows
+        .map((row) => row[key])
+        .filter((value) => Number.isFinite(value))
+        .sort((a, b) => a - b);
+      if (!values.length) return null;
+      return {
+        low: d3.quantile(values, 0.33) ?? values[0],
+        high: d3.quantile(values, 0.66) ?? values[values.length - 1],
+      };
+    };
+
+    return {
+      damage: buildBands(METRICS.damage.key),
+      funding: buildBands(METRICS.funding.key),
+    };
+  }, [provinceRows]);
+
   const provinces = useMemo(() => {
     if (!provinceGeometry.length) return [];
     const metricKey = METRICS[selectedMetric].key;
@@ -894,8 +985,19 @@ function App() {
 
   const detailRow = selectedProvince?.row;
   const detailScore = detailRow?.Disparity_Index ?? null;
-  const verdict = scoreToVerdict(detailScore);
-  const verdictSentence = buildVerdictSentence(detailRow);
+  const selectedMetricValue = detailRow
+    ? detailRow[METRICS[selectedMetric].key]
+    : null;
+  const verdict = metricToVerdict(
+    selectedMetric,
+    selectedMetricValue,
+    detailRow,
+    metricBands,
+  );
+  const verdictSentence =
+    selectedMetric === "moneyGap"
+      ? buildRatioSentence(detailRow)
+      : buildVerdictSentence(detailRow);
   const detailRank = detailRow
     ? gapRanks.map.get(normalizeName(detailRow.Province))
     : null;
