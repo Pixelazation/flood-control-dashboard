@@ -110,6 +110,8 @@ const REGION_FILES = [
 
 const MAP_WIDTH = 900;
 const MAP_HEIGHT = 700;
+const MAP_OFFSET_X = 0;
+const MAP_OFFSET_Y = 12;
 
 const METRICS = {
   gap: {
@@ -385,7 +387,9 @@ const MapToggle = ({ value, onChange, variant = "full" }) => {
         <button
           key={option.id}
           type="button"
-          className={`toggle-button ${value === option.id ? "is-active" : ""}`}
+          className={`toggle-button metric-${option.id} ${
+            value === option.id ? "is-active" : ""
+          }`}
           onClick={() => onChange(option.id)}
           aria-pressed={value === option.id}
         >
@@ -668,9 +672,11 @@ function App() {
 
   const projection = useMemo(() => {
     if (!provinceFeatures.length) return null;
-    return d3
+    const base = d3
       .geoMercator()
       .fitSize([MAP_WIDTH, MAP_HEIGHT], provinceCollection);
+    const [x, y] = base.translate();
+    return base.translate([x + MAP_OFFSET_X, y + MAP_OFFSET_Y]);
   }, [provinceCollection, provinceFeatures.length]);
 
   const pathGenerator = useMemo(() => {
@@ -804,25 +810,6 @@ function App() {
       map.set(normalizeName(row.Province), index + 1);
     });
     return { map, total: sorted.length };
-  }, [provinceRows]);
-
-  const nationalStats = useMemo(() => {
-    const valid = provinceRows.filter((row) => row.Disparity_Index !== null);
-    if (!valid.length) return null;
-    const sorted = [...valid].sort(
-      (a, b) => (a.Disparity_Index || 0) - (b.Disparity_Index || 0),
-    );
-    const mostNeglected = sorted[0];
-    const mostOverfunded = sorted[sorted.length - 1];
-    const avgSlip = d3.mean(
-      provinceRows,
-      (row) => row.Avg_Slippage_Days ?? null,
-    );
-    return {
-      mostNeglected,
-      mostOverfunded,
-      avgSlip: avgSlip ? avgSlip.toFixed(1) : "No data",
-    };
   }, [provinceRows]);
 
   const metricScale = useMemo(() => {
@@ -966,6 +953,7 @@ function App() {
           name: province.name,
           value,
           category: rbaiCategory,
+          row,
         };
       })
       .filter(Boolean);
@@ -1004,6 +992,97 @@ function App() {
       default:
         return String(item.value);
     }
+  };
+
+  const getRankingClassName = (item) => {
+    const verdict =
+      selectedMetric === "rbaiCategory"
+        ? rbaiCategoryToVerdict(item.category)
+        : metricToVerdict(selectedMetric, item.value, item.row, metricBands);
+    return verdict.className
+      ? verdict.className.replace("badge-", "rank-")
+      : "";
+  };
+
+  const histogramColor = useMemo(() => {
+    switch (selectedMetric) {
+      case "damage":
+        return "#E67E22";
+      case "funding":
+        return "#1E8449";
+      case "rbaiCategory":
+        return "#7F8C8D";
+      default:
+        return "#2471A3";
+    }
+  }, [selectedMetric]);
+
+  const histogramData = useMemo(() => {
+    if (selectedMetric === "rbaiCategory") {
+      const counts = new Map();
+      provinceGeometry.forEach((province) => {
+        const category = rbaiCategoryMap.get(province.id);
+        if (category) {
+          counts.set(category, (counts.get(category) || 0) + 1);
+        }
+      });
+      const bins = RBAI_CATEGORY_ORDER.map((category) => ({
+        label: category,
+        value: counts.get(category) || 0,
+        color: RBAI_CATEGORY_COLORS[category],
+      }));
+      const maxValue = Math.max(1, ...bins.map((bin) => bin.value));
+      return { type: "category", bins, maxValue };
+    }
+
+    const values = rankingItems
+      .map((item) => item.value)
+      .filter((value) => Number.isFinite(value));
+    if (!values.length) return null;
+    if (selectedMetric === "rbaiIndex") {
+      const logValues = values
+        .filter((value) => value > 0)
+        .map((value) => Math.log10(value));
+      if (!logValues.length) return null;
+      const min = d3.min(logValues) ?? 0;
+      const max = d3.max(logValues) ?? 0;
+      const bins = d3.bin().domain([min, max]).thresholds(8)(logValues);
+      const maxValue = d3.max(bins, (bin) => bin.length) ?? 1;
+      return { type: "numeric", bins, maxValue, min, max, isLog: true };
+    }
+    const min = d3.min(values) ?? 0;
+    const max = d3.max(values) ?? 0;
+    const bins = d3.bin().domain([min, max]).thresholds(8)(values);
+    const maxValue = d3.max(bins, (bin) => bin.length) ?? 1;
+    return { type: "numeric", bins, maxValue, min, max, isLog: false };
+  }, [rankingItems, selectedMetric, provinceGeometry, rbaiCategoryMap]);
+
+  const formatHistogramValue = (value) => {
+    if (!Number.isFinite(value)) return "No data";
+    if (selectedMetric === "moneyGap") {
+      return `${value.toFixed(2)}x`;
+    }
+    if (selectedMetric === "rbaiIndex") {
+      return value.toFixed(2);
+    }
+    if (selectedMetric === "gap") {
+      return value.toFixed(1);
+    }
+    if (
+      selectedMetric === "monetaryGap" ||
+      selectedMetric === "damage" ||
+      selectedMetric === "funding"
+    ) {
+      return formatBillions(value);
+    }
+    return value.toFixed(2);
+  };
+
+  const formatHistogramRange = (start, end, isLog) => {
+    if (!Number.isFinite(start) || !Number.isFinite(end)) return "No data";
+    const from = isLog ? Math.pow(10, start) : start;
+    const to = isLog ? Math.pow(10, end) : end;
+    return `${formatHistogramValue(from)}–${formatHistogramValue(to)}`;
   };
 
   const provinces = useMemo(() => {
@@ -1097,24 +1176,6 @@ function App() {
   const handleBackgroundClick = (event) => {
     if (event?.defaultPrevented || isDraggingRef.current) return;
     setSelectedProvince(null);
-  };
-
-  const handleZoom = (factor) => {
-    if (!zoomBehaviorRef.current || !svgRef.current) return;
-    const svg = d3.select(svgRef.current);
-    svg
-      .transition()
-      .duration(200)
-      .call(zoomBehaviorRef.current.scaleBy, factor);
-  };
-
-  const handleZoomReset = () => {
-    if (!zoomBehaviorRef.current || !svgRef.current) return;
-    const svg = d3.select(svgRef.current);
-    svg
-      .transition()
-      .duration(200)
-      .call(zoomBehaviorRef.current.transform, d3.zoomIdentity);
   };
 
   const getTooltipValue = useCallback(
@@ -1328,32 +1389,6 @@ function App() {
                 ))}
               </g>
             </svg>
-            <div className="map-zoom-controls">
-              <button
-                type="button"
-                className="zoom-button"
-                onClick={() => handleZoom(1.2)}
-                aria-label="Zoom in"
-              >
-                +
-              </button>
-              <button
-                type="button"
-                className="zoom-button"
-                onClick={() => handleZoom(0.8)}
-                aria-label="Zoom out"
-              >
-                -
-              </button>
-              <button
-                type="button"
-                className="zoom-button reset"
-                onClick={handleZoomReset}
-                aria-label="Reset zoom"
-              >
-                Reset
-              </button>
-            </div>
             <div
               ref={tooltipRef}
               className={`map-tooltip ${tooltipContent.visible ? "is-visible" : ""}`}
@@ -1368,79 +1403,6 @@ function App() {
           <div className="map-hint">
             Click a province to open the detail panel.
           </div>
-          {selectedProvince && (
-            <section className="detail-panel detail-panel-open">
-              <div className="detail-content">
-                <button
-                  type="button"
-                  className="close-button"
-                  onClick={() => setSelectedProvince(null)}
-                  aria-label="Close details"
-                >
-                  X
-                </button>
-                <h2>{selectedProvince.name}</h2>
-                <div className={`badge ${verdict.className}`}>
-                  {verdict.label}
-                </div>
-                <p className="verdict-text">{verdictSentence}</p>
-
-                <div className="stat-grid">
-                  <div className="stat-card">
-                    <span className="stat-title">Funding Gap Score</span>
-                    <span className="stat-main">
-                      {detailScore !== null
-                        ? detailScore.toFixed(1)
-                        : "No data"}
-                    </span>
-                    <span className="stat-sub">
-                      {detailRank
-                        ? `Rank ${detailRank} of ${gapRanks.total}`
-                        : ""}
-                    </span>
-                  </div>
-                  <div className="stat-card">
-                    <span className="stat-title">Total Typhoon Damage</span>
-                    <span className="stat-main">
-                      {formatBillions(detailRow?.Total_Damage_PhP ?? null)}
-                    </span>
-                  </div>
-                  <div className="stat-card">
-                    <span className="stat-title">Total Flood Budget</span>
-                    <span className="stat-main">
-                      {formatBillions(detailRow?.ABC ?? null)}
-                    </span>
-                  </div>
-                  <div className="stat-card">
-                    <span className="stat-title">Total Projects</span>
-                    <span className="stat-main">
-                      {formatNumber(detailRow?.Total_Projects ?? null)}
-                    </span>
-                  </div>
-                  <div className="stat-card">
-                    <span className="stat-title">Avg Slippage Days</span>
-                    <span className="stat-main">
-                      {detailRow?.Avg_Slippage_Days !== null &&
-                      detailRow?.Avg_Slippage_Days !== undefined
-                        ? `${detailRow.Avg_Slippage_Days.toFixed(1)} days`
-                        : "No data"}
-                    </span>
-                  </div>
-                  <div className="stat-card">
-                    <span className="stat-title">Deaths + Affected</span>
-                    <span className="stat-main">
-                      {detailRow &&
-                      (detailRow.Deaths !== null || detailRow.Affected !== null)
-                        ? `${formatNumber(detailRow.Deaths ?? 0)} deaths / ${formatNumber(
-                            detailRow.Affected ?? 0,
-                          )} affected`
-                        : "No data"}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </section>
-          )}
         </main>
 
         <aside className="rankings-panel rise-in">
@@ -1450,19 +1412,83 @@ function App() {
               {METRICS[selectedMetric].label}
             </div>
           </div>
+          {histogramData && (
+            <div className="rankings-histogram">
+              <div className="histogram-title">Distribution</div>
+              <div
+                className={`histogram-bars ${
+                  histogramData.type === "category" ? "is-category" : ""
+                }`}
+              >
+                {histogramData.type === "category"
+                  ? histogramData.bins.map((bin) => (
+                      <div
+                        key={bin.label}
+                        className="histogram-bar"
+                        style={{
+                          height: `${(bin.value / histogramData.maxValue) * 100}%`,
+                          background: bin.color,
+                        }}
+                        title={`${bin.label}: ${bin.value}`}
+                      >
+                        <span className="histogram-bar-label">{bin.value}</span>
+                      </div>
+                    ))
+                  : histogramData.bins.map((bin, index) => (
+                      <div
+                        key={`bin-${index}`}
+                        className="histogram-bar"
+                        style={{
+                          height: `${(bin.length / histogramData.maxValue) * 100}%`,
+                          background: histogramColor,
+                        }}
+                        title={`${formatHistogramRange(
+                          bin.x0,
+                          bin.x1,
+                          histogramData.isLog,
+                        )} • ${bin.length}`}
+                      ></div>
+                    ))}
+              </div>
+              {histogramData.type === "numeric" && (
+                <div className="histogram-axis">
+                  <span>
+                    {formatHistogramValue(
+                      histogramData.isLog
+                        ? Math.pow(10, histogramData.min ?? 0)
+                        : (histogramData.min ?? 0),
+                    )}
+                  </span>
+                  <span>
+                    {formatHistogramValue(
+                      histogramData.isLog
+                        ? Math.pow(10, histogramData.max ?? 0)
+                        : (histogramData.max ?? 0),
+                    )}
+                  </span>
+                </div>
+              )}
+              {histogramData.type === "category" && (
+                <div className="histogram-axis">
+                  <span>0</span>
+                  <span>{histogramData.maxValue}</span>
+                </div>
+              )}
+            </div>
+          )}
           <div className="rankings-grid">
             <div className="rankings-column">
               <div className="rankings-label">{rankingLabels.low}</div>
               <ol className="rankings-list">
                 {rankingLists.low.map((item) => (
-                  <li className="ranking-item" key={`low-${item.id}`}>
+                  <li
+                    className={`ranking-item ${getRankingClassName(item)}`}
+                    key={`low-${item.id}`}
+                  >
                     <span className="ranking-name">{item.name}</span>
                     <span className="ranking-value">
                       {formatRankingValue(item)}
                     </span>
-                    {selectedMetric === "rbaiCategory" && item.category && (
-                      <span className="ranking-note">{item.category}</span>
-                    )}
                   </li>
                 ))}
               </ol>
@@ -1471,14 +1497,14 @@ function App() {
               <div className="rankings-label">{rankingLabels.high}</div>
               <ol className="rankings-list">
                 {rankingLists.high.map((item) => (
-                  <li className="ranking-item" key={`high-${item.id}`}>
+                  <li
+                    className={`ranking-item ${getRankingClassName(item)}`}
+                    key={`high-${item.id}`}
+                  >
                     <span className="ranking-name">{item.name}</span>
                     <span className="ranking-value">
                       {formatRankingValue(item)}
                     </span>
-                    {selectedMetric === "rbaiCategory" && item.category && (
-                      <span className="ranking-note">{item.category}</span>
-                    )}
                   </li>
                 ))}
               </ol>
@@ -1486,6 +1512,89 @@ function App() {
           </div>
         </aside>
       </div>
+      {selectedProvince && (
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onClick={() => setSelectedProvince(null)}
+        >
+          <section
+            className="modal-card"
+            role="dialog"
+            aria-modal="true"
+            aria-label={`${selectedProvince.name} details`}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="detail-content">
+              <button
+                type="button"
+                className="close-button"
+                onClick={() => setSelectedProvince(null)}
+                aria-label="Close details"
+              >
+                X
+              </button>
+              <h2>{selectedProvince.name}</h2>
+              <div className={`badge ${verdict.className}`}>
+                {verdict.label}
+              </div>
+              <p className="verdict-text">{verdictSentence}</p>
+
+              <div className="stat-grid">
+                <div className="stat-card">
+                  <span className="stat-title">Funding Gap Score</span>
+                  <span className="stat-main">
+                    {detailScore !== null ? detailScore.toFixed(1) : "No data"}
+                  </span>
+                  <span className="stat-sub">
+                    {detailRank
+                      ? `Rank ${detailRank} of ${gapRanks.total}`
+                      : ""}
+                  </span>
+                </div>
+                <div className="stat-card">
+                  <span className="stat-title">Total Typhoon Damage</span>
+                  <span className="stat-main">
+                    {formatBillions(detailRow?.Total_Damage_PhP ?? null)}
+                  </span>
+                </div>
+                <div className="stat-card">
+                  <span className="stat-title">Total Flood Budget</span>
+                  <span className="stat-main">
+                    {formatBillions(detailRow?.ABC ?? null)}
+                  </span>
+                </div>
+                <div className="stat-card">
+                  <span className="stat-title">Total Projects</span>
+                  <span className="stat-main">
+                    {formatNumber(detailRow?.Total_Projects ?? null)}
+                  </span>
+                </div>
+                <div className="stat-card">
+                  <span className="stat-title">Avg Slippage Days</span>
+                  <span className="stat-main">
+                    {detailRow?.Avg_Slippage_Days !== null &&
+                    detailRow?.Avg_Slippage_Days !== undefined
+                      ? `${detailRow.Avg_Slippage_Days.toFixed(1)} days`
+                      : "No data"}
+                  </span>
+                </div>
+                <div className="stat-card">
+                  <span className="stat-title">Deaths + Affected</span>
+                  <span className="stat-main">
+                    {detailRow &&
+                    (detailRow.Deaths !== null || detailRow.Affected !== null)
+                      ? `${formatNumber(detailRow.Deaths ?? 0)} deaths / ${formatNumber(
+                          detailRow.Affected ?? 0,
+                        )} affected`
+                      : "No data"}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }
