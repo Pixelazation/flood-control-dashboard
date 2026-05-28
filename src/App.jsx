@@ -116,10 +116,10 @@ const MAP_OFFSET_Y = 12;
 const METRICS = {
   gap: {
     key: "Disparity_Index",
-    label: "Funding Gap Score",
-    shortLabel: "Funding Gap",
+    label: "Priority Gap Score",
+    shortLabel: "Priority Gap",
     description:
-      "Funding Gap Score = funding rank minus damage rank. Negative means underfunded.",
+      "Priority Gap Score = funding rank minus damage rank. Negative means underfunded.",
   },
   moneyGap: {
     key: "Monetary_Gap",
@@ -353,7 +353,7 @@ const buildRatioSentence = (row) => {
 
 const buildVerdictSentence = (row) => {
   if (!row) {
-    return "This province does not have enough data for a funding gap assessment.";
+    return "This province does not have enough data for a Priority Gap assessment.";
   }
   const damage = row.Total_Damage_PhP;
   const funding = row.ABC;
@@ -1539,7 +1539,7 @@ function App() {
 
               <div className="stat-grid">
                 <div className="stat-card">
-                  <span className="stat-title">Funding Gap Score</span>
+                  <span className="stat-title">Priority Gap Score</span>
                   <span className="stat-main">
                     {detailScore !== null ? detailScore.toFixed(1) : "No data"}
                   </span>
