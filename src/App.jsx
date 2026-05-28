@@ -141,12 +141,19 @@ const METRICS = {
     description:
       "Monetary Gap = flood funding minus typhoon damage (PHP). Negative means underfunded.",
   },
-  rbai: {
-    key: "RBAI_Category",
-    label: "RBAI Category",
-    shortLabel: "RBAI",
+  rbaiIndex: {
+    key: "RBAI",
+    label: "Risk-to-Budget Alignment Index",
+    shortLabel: "RBAI Index",
     description:
       "RBAI = budget share divided by damage share. 1.0 aligned, >1 over-allocated, <1 under-allocated.",
+  },
+  rbaiCategory: {
+    key: "RBAI_Category",
+    label: "RBAI Classification",
+    shortLabel: "RBAI Class",
+    description:
+      "RBAI category classification by allocation and vulnerability.",
   },
   damage: {
     key: "Total_Damage_PhP",
@@ -271,11 +278,31 @@ const rbaiCategoryToVerdict = (category) => {
   return { label: "Baseline Maintenance", className: "badge-neutral" };
 };
 
+const rbaiIndexToVerdict = (value) => {
+  if (!Number.isFinite(value)) {
+    return { label: "No data", className: "badge-neutral" };
+  }
+  if (value < 0.9) {
+    return { label: "Under-Allocated", className: "badge-warning" };
+  }
+  if (value > 1.1) {
+    return { label: "Over-Allocated", className: "badge-critical" };
+  }
+  return { label: "Aligned", className: "badge-strong" };
+};
+
 const buildRbaiSentence = (category) => {
   if (!category) {
     return "This province does not have an RBAI classification yet.";
   }
   return `RBAI classification: ${category}.`;
+};
+
+const buildRbaiIndexSentence = (value) => {
+  if (!Number.isFinite(value)) {
+    return "This province does not have an RBAI value yet.";
+  }
+  return `RBAI value: ${value.toFixed(2)}.`;
 };
 
 const metricToVerdict = (metric, value, row, bands) => {
@@ -288,7 +315,10 @@ const metricToVerdict = (metric, value, row, bands) => {
   if (metric === "monetaryGap") {
     return monetaryGapToVerdict(value, row?.Total_Damage_PhP ?? null);
   }
-  if (metric === "rbai") {
+  if (metric === "rbaiIndex") {
+    return rbaiIndexToVerdict(value);
+  }
+  if (metric === "rbaiCategory") {
     return rbaiCategoryToVerdict(value);
   }
   if (metric === "damage" || metric === "funding") {
@@ -361,7 +391,8 @@ const MapToggle = ({ value, onChange, variant = "full" }) => {
     { id: "gap", label: METRICS.gap.shortLabel },
     { id: "monetaryGap", label: METRICS.monetaryGap.shortLabel },
     { id: "moneyGap", label: METRICS.moneyGap.shortLabel },
-    { id: "rbai", label: METRICS.rbai.shortLabel },
+    { id: "rbaiIndex", label: METRICS.rbaiIndex.shortLabel },
+    { id: "rbaiCategory", label: METRICS.rbaiCategory.shortLabel },
     { id: "damage", label: METRICS.damage.shortLabel },
     { id: "funding", label: METRICS.funding.shortLabel },
   ];
@@ -379,7 +410,8 @@ const MapToggle = ({ value, onChange, variant = "full" }) => {
           {option.id === "gap" ||
           option.id === "moneyGap" ||
           option.id === "monetaryGap" ||
-          option.id === "rbai" ? (
+          option.id === "rbaiIndex" ||
+          option.id === "rbaiCategory" ? (
             <span className="toggle-with-info">
               {option.label}
               <span
@@ -439,7 +471,7 @@ const Legend = ({ metric }) => {
       </div>
     );
   }
-  if (metric === "rbai") {
+  if (metric === "rbaiCategory") {
     return (
       <div className="legend-block">
         <div className="legend-title">{METRICS[metric].label}</div>
@@ -453,6 +485,19 @@ const Legend = ({ metric }) => {
               <span>{category}</span>
             </div>
           ))}
+        </div>
+      </div>
+    );
+  }
+  if (metric === "rbaiIndex") {
+    return (
+      <div className="legend-block">
+        <div className="legend-title">{METRICS[metric].label}</div>
+        <div className="legend-bar legend-gap"></div>
+        <div className="legend-labels">
+          <span>Under-Allocated</span>
+          <span>Aligned (1.0)</span>
+          <span>Over-Allocated</span>
         </div>
       </div>
     );
@@ -529,7 +574,8 @@ function App() {
   const [provinceFeatures, setProvinceFeatures] = useState([]);
   const [regionFeatures, setRegionFeatures] = useState([]);
   const [provinceRows, setProvinceRows] = useState([]);
-  const [rbaiMap, setRbaiMap] = useState(() => new Map());
+  const [rbaiIndexMap, setRbaiIndexMap] = useState(() => new Map());
+  const [rbaiCategoryMap, setRbaiCategoryMap] = useState(() => new Map());
   const [yearlyRows, setYearlyRows] = useState([]);
   const [yearlyStatus, setYearlyStatus] = useState("idle");
   const [selectedProvince, setSelectedProvince] = useState(null);
@@ -637,22 +683,29 @@ function App() {
             header: true,
             skipEmptyLines: true,
           });
-          const nextRbaiMap = new Map();
+          const nextRbaiIndexMap = new Map();
+          const nextRbaiCategoryMap = new Map();
           parsedRbai.data.forEach((row) => {
             const name = row.Province || row.province || row.PROVINCE;
             const category = normalizeRbaiCategory(
               row.Category || row.category || row.CATEGORY,
             );
+            const rbaiValue = parseNumber(row.RBAI || row.rbai || row.Rbai);
             if (name && category) {
-              nextRbaiMap.set(normalizeName(name), category);
+              nextRbaiCategoryMap.set(normalizeName(name), category);
+            }
+            if (name && Number.isFinite(rbaiValue) && rbaiValue > 0) {
+              nextRbaiIndexMap.set(normalizeName(name), rbaiValue);
             }
           });
           if (isMounted) {
-            setRbaiMap(nextRbaiMap);
+            setRbaiIndexMap(nextRbaiIndexMap);
+            setRbaiCategoryMap(nextRbaiCategoryMap);
           }
         } catch (error) {
           if (isMounted) {
-            setRbaiMap(new Map());
+            setRbaiIndexMap(new Map());
+            setRbaiCategoryMap(new Map());
           }
         }
 
@@ -856,6 +909,30 @@ function App() {
 
   const metricScale = useMemo(() => {
     if (!provinceRows.length) return null;
+    if (selectedMetric === "rbaiIndex") {
+      const values = Array.from(rbaiIndexMap.values()).filter(
+        (value) => Number.isFinite(value) && value > 0,
+      );
+      if (!values.length) return null;
+      const logValues = values.map((value) => Math.log10(value));
+      const absLogValues = logValues
+        .map((value) => Math.abs(value))
+        .sort((a, b) => a - b);
+      const maxAbs =
+        d3.quantile(absLogValues, 0.95) ??
+        absLogValues[absLogValues.length - 1] ??
+        1;
+      return d3
+        .scaleDiverging()
+        .domain([-maxAbs, 0, maxAbs])
+        .clamp(true)
+        .interpolator(
+          d3.interpolateRgbBasis(["#C0392B", "#F0F0F0", "#2471A3"]),
+        );
+    }
+    if (selectedMetric === "rbaiCategory") {
+      return null;
+    }
     const metricKey = METRICS[selectedMetric].key;
     const values = provinceRows
       .map((row) => row[metricKey])
@@ -899,7 +976,7 @@ function App() {
       .scaleSequential()
       .domain([min, max])
       .interpolator(d3.interpolateRgb("#E9F7EF", "#1E8449"));
-  }, [provinceRows, selectedMetric]);
+  }, [provinceRows, selectedMetric, rbaiIndexMap]);
 
   const metricBands = useMemo(() => {
     const buildBands = (key) => {
@@ -925,12 +1002,13 @@ function App() {
     const metricKey = METRICS[selectedMetric].key;
     return provinceGeometry.map((province) => {
       const row = provinceDataMap.get(province.id);
-      const rbaiCategory = rbaiMap.get(province.id) || null;
+      const rbaiCategory = rbaiCategoryMap.get(province.id) || null;
+      const rbaiIndex = rbaiIndexMap.get(province.id) ?? null;
       const dimmed =
         regionFilter !== "All Regions" && province.regionName !== regionFilter;
 
-      if (selectedMetric === "rbai") {
-        const isNoData = province.id === "basilan" || !rbaiCategory;
+      if (selectedMetric === "rbaiCategory") {
+        const isNoData = !rbaiCategory;
         const fill = isNoData
           ? "url(#no-data-hatch)"
           : RBAI_CATEGORY_COLORS[rbaiCategory] || "#E0E0E0";
@@ -938,6 +1016,25 @@ function App() {
           ...province,
           row,
           rbaiCategory,
+          rbaiIndex,
+          fill,
+          dimmed,
+          isNoData,
+        };
+      }
+      if (selectedMetric === "rbaiIndex") {
+        const isNoData = !Number.isFinite(rbaiIndex) || rbaiIndex <= 0;
+        const logValue = isNoData ? null : Math.log10(rbaiIndex);
+        const fill = isNoData
+          ? "url(#no-data-hatch)"
+          : metricScale
+            ? metricScale(logValue)
+            : "#E0E0E0";
+        return {
+          ...province,
+          row,
+          rbaiCategory,
+          rbaiIndex,
           fill,
           dimmed,
           isNoData,
@@ -956,6 +1053,7 @@ function App() {
         ...province,
         row,
         rbaiCategory,
+        rbaiIndex,
         fill,
         dimmed,
         isNoData,
@@ -964,7 +1062,8 @@ function App() {
   }, [
     provinceGeometry,
     provinceDataMap,
-    rbaiMap,
+    rbaiIndexMap,
+    rbaiCategoryMap,
     selectedMetric,
     metricScale,
     regionFilter,
@@ -1050,7 +1149,12 @@ function App() {
         ? formatBillions(metricValue)
         : "No data available";
     }
-    if (selectedMetric === "rbai") {
+    if (selectedMetric === "rbaiIndex") {
+      return Number.isFinite(province.rbaiIndex)
+        ? province.rbaiIndex.toFixed(2)
+        : "No data available";
+    }
+    if (selectedMetric === "rbaiCategory") {
       return province.rbaiCategory || "No data available";
     }
     return formatBillions(metricValue);
@@ -1107,14 +1211,19 @@ function App() {
   const detailRow = selectedProvince?.row;
   const detailScore = detailRow?.Disparity_Index ?? null;
   const selectedRbaiCategory = selectedProvince
-    ? rbaiMap.get(normalizeName(selectedProvince.name)) || null
+    ? rbaiCategoryMap.get(normalizeName(selectedProvince.name)) || null
+    : null;
+  const selectedRbaiIndex = selectedProvince
+    ? (rbaiIndexMap.get(normalizeName(selectedProvince.name)) ?? null)
     : null;
   const selectedMetricValue =
-    selectedMetric === "rbai"
+    selectedMetric === "rbaiCategory"
       ? selectedRbaiCategory
-      : detailRow
-        ? detailRow[METRICS[selectedMetric].key]
-        : null;
+      : selectedMetric === "rbaiIndex"
+        ? selectedRbaiIndex
+        : detailRow
+          ? detailRow[METRICS[selectedMetric].key]
+          : null;
   const verdict = metricToVerdict(
     selectedMetric,
     selectedMetricValue,
@@ -1124,9 +1233,11 @@ function App() {
   const verdictSentence =
     selectedMetric === "moneyGap"
       ? buildRatioSentence(detailRow)
-      : selectedMetric === "rbai"
+      : selectedMetric === "rbaiCategory"
         ? buildRbaiSentence(selectedRbaiCategory)
-        : buildVerdictSentence(detailRow);
+        : selectedMetric === "rbaiIndex"
+          ? buildRbaiIndexSentence(selectedRbaiIndex)
+          : buildVerdictSentence(detailRow);
   const detailRank = detailRow
     ? gapRanks.map.get(normalizeName(detailRow.Province))
     : null;
