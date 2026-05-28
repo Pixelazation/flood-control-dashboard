@@ -1050,11 +1050,11 @@ function App() {
       const maxValue = d3.max(bins, (bin) => bin.length) ?? 1;
       return { type: "numeric", bins, maxValue, min, max, isLog: true };
     }
-    const min = d3.min(values) ?? 0;
-    const max = d3.max(values) ?? 0;
-    const bins = d3.bin().domain([min, max]).thresholds(8)(values);
+    const p5 = d3.quantile(values, 0.05);
+    const p95 = d3.quantile(values, 0.95);
+    const bins = d3.bin().domain([p5, p95]).thresholds(8)(values);
     const maxValue = d3.max(bins, (bin) => bin.length) ?? 1;
-    return { type: "numeric", bins, maxValue, min, max, isLog: false };
+    return { type: "numeric", bins, maxValue, p5, p95, isLog: false };
   }, [rankingItems, selectedMetric, provinceGeometry, rbaiCategoryMap]);
 
   const formatHistogramValue = (value) => {
@@ -1306,11 +1306,8 @@ function App() {
       <div className="dashboard-grid">
         <aside className="sidebar rise-in">
           <div className="title-block">
-            <h1>Flood Money vs. Flood Risk</h1>
-            <p>
-              Comparing typhoon damage against flood control funding across
-              Philippine provinces.
-            </p>
+            <h1>Project B.A.H.A.</h1>
+            <p>Are Philippine Provinces Funded Where It Hurts Most?</p>
           </div>
 
           <div className="control-block">
