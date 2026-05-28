@@ -209,6 +209,33 @@
   overflow: hidden;
 }
 
+.map-zoom-controls {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  z-index: 2;
+}
+
+.zoom-button {
+  border: 1px solid var(--panel-border);
+  background: #fff;
+  border-radius: 10px;
+  width: 34px;
+  height: 34px;
+  font-size: 16px;
+  cursor: pointer;
+  box-shadow: var(--shadow-soft);
+}
+
+.zoom-button.reset {
+  font-size: 12px;
+  width: 52px;
+  height: 32px;
+}
+
 .map-svg {
   width: 100%;
   height: auto;
@@ -291,6 +318,7 @@
   box-shadow: var(--shadow);
   position: relative;
   min-height: 200px;
+  margin-top: 12px;
   transition:
     opacity 0.25s ease,
     transform 0.25s ease;
@@ -305,6 +333,76 @@
 .detail-panel-open {
   opacity: 1;
   transform: translateY(0);
+}
+
+.rankings-panel {
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 18px;
+  padding: 18px;
+  box-shadow: var(--shadow-soft);
+}
+
+.rankings-header {
+  margin-bottom: 12px;
+}
+
+.rankings-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.rankings-subtitle {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.rankings-grid {
+  display: grid;
+  gap: 16px;
+}
+
+.rankings-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+.rankings-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.ranking-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: #fff;
+  border: 1px solid var(--panel-border);
+}
+
+.ranking-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.ranking-value {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.ranking-note {
+  font-size: 11px;
+  color: var(--muted);
 }
 
 .detail-content h2 {
@@ -346,9 +444,14 @@
   color: #b9770e;
 }
 
+.badge-balanced {
+  background: #d5f5e3;
+  color: #1e8449;
+}
+
 .badge-neutral {
-  background: #e6e6e6;
-  color: #444;
+  background: #ececec;
+  color: #555;
 }
 
 .badge-info {
@@ -357,8 +460,8 @@
 }
 
 .badge-strong {
-  background: #cfe2f3;
-  color: #154360;
+  background: #bcd7f5;
+  color: #0b3d91;
 }
 
 .verdict-text {

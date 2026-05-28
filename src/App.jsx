@@ -1,14 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as d3 from "d3";
 import Papa from "papaparse";
-import {
-  Line,
-  LineChart,
-  ResponsiveContainer,
-  Tooltip as RechartsTooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
 import "./App.css";
 
 const PROVINCE_FILES = [
@@ -146,7 +138,7 @@ const METRICS = {
     label: "Risk-to-Budget Alignment Index",
     shortLabel: "RBAI Index",
     description:
-      "RBAI = budget share divided by damage share. 1.0 aligned, >1 over-allocated, <1 under-allocated.",
+      "Risk-Budget Allocation Index (RBAI) = budget share divided by damage share. 1.0 aligned, >1 over-allocated, <1 under-allocated.",
   },
   rbaiCategory: {
     key: "RBAI_Category",
@@ -228,7 +220,7 @@ const scoreToVerdict = (score) => {
     return { label: "Possibly Underfunded", className: "badge-warning" };
   }
   if (score <= 15) {
-    return { label: "Balanced", className: "badge-neutral" };
+    return { label: "Balanced", className: "badge-balanced" };
   }
   if (score <= 40) {
     return { label: "Possibly Overfunded", className: "badge-info" };
@@ -242,10 +234,10 @@ const moneyGapToVerdict = (value) => {
   }
   const nearBalance = Math.abs(Math.abs(value) - 1) <= 0.1;
   if (nearBalance) {
-    return { label: "Balanced", className: "badge-neutral" };
+    return { label: "Balanced", className: "badge-balanced" };
   }
   return value < 0
-    ? { label: "Damage > Cost", className: "badge-critical" }
+    ? { label: "Damage > Cost", className: "badge-warning" }
     : { label: "Cost > Damage", className: "badge-info" };
 };
 
@@ -255,11 +247,11 @@ const monetaryGapToVerdict = (value, damage) => {
   }
   const tolerance = Number.isFinite(damage) ? Math.abs(damage) * 0.1 : 0;
   if (Math.abs(value) <= tolerance) {
-    return { label: "Balanced", className: "badge-neutral" };
+    return { label: "Balanced", className: "badge-balanced" };
   }
   return value < 0
-    ? { label: "Underfunded", className: "badge-critical" }
-    : { label: "Overfunded", className: "badge-strong" };
+    ? { label: "Underfunded", className: "badge-warning" }
+    : { label: "Overfunded", className: "badge-info" };
 };
 
 const rbaiCategoryToVerdict = (category) => {
@@ -267,13 +259,13 @@ const rbaiCategoryToVerdict = (category) => {
     return { label: "No data", className: "badge-neutral" };
   }
   if (category === "Over-Allocated / Low-Risk Spending") {
-    return { label: "Over-Allocated", className: "badge-critical" };
+    return { label: "Over-Allocated", className: "badge-info" };
   }
   if (category === "Under-Funded / High Vulnerability") {
     return { label: "Under-Funded", className: "badge-warning" };
   }
   if (category === "Appropriate Priority") {
-    return { label: "Appropriate Priority", className: "badge-strong" };
+    return { label: "Appropriate Priority", className: "badge-balanced" };
   }
   return { label: "Baseline Maintenance", className: "badge-neutral" };
 };
@@ -286,9 +278,9 @@ const rbaiIndexToVerdict = (value) => {
     return { label: "Under-Allocated", className: "badge-warning" };
   }
   if (value > 1.1) {
-    return { label: "Over-Allocated", className: "badge-critical" };
+    return { label: "Over-Allocated", className: "badge-info" };
   }
-  return { label: "Aligned", className: "badge-strong" };
+  return { label: "Aligned", className: "badge-balanced" };
 };
 
 const buildRbaiSentence = (category) => {
@@ -374,16 +366,6 @@ const buildVerdictSentence = (row) => {
     ? `${formatNumber(projects)} projects`
     : "few projects";
   return `Funding sits ${direction} estimated typhoon damage by ${gapValue}, supported by ${projectText}.`;
-};
-
-const resolveYearlyValue = (row, keys) => {
-  for (const key of keys) {
-    if (row[key] !== undefined) {
-      const parsed = parseNumber(row[key]);
-      if (parsed !== null) return parsed;
-    }
-  }
-  return null;
 };
 
 const MapToggle = ({ value, onChange, variant = "full" }) => {
@@ -516,50 +498,6 @@ const Legend = ({ metric }) => {
   );
 };
 
-const MiniChart = ({ data }) => {
-  if (!data || data.length === 0) {
-    return (
-      <div className="mini-chart-empty">No yearly data for this province.</div>
-    );
-  }
-
-  return (
-    <div className="mini-chart">
-      <ResponsiveContainer width="100%" height={180}>
-        <LineChart
-          data={data}
-          margin={{ top: 10, right: 8, left: -10, bottom: 0 }}
-        >
-          <XAxis dataKey="year" tick={{ fontSize: 11 }} />
-          <YAxis domain={[0, 100]} tick={{ fontSize: 11 }} />
-          <RechartsTooltip
-            formatter={(value, name) => [
-              value === null || value === undefined
-                ? "No data"
-                : `${Number(value).toFixed(1)}%`,
-              name === "damage" ? "Damage" : "Funding",
-            ]}
-          />
-          <Line
-            type="monotone"
-            dataKey="damage"
-            stroke="#E67E22"
-            strokeWidth={2}
-            dot={false}
-          />
-          <Line
-            type="monotone"
-            dataKey="funding"
-            stroke="#1E8449"
-            strokeWidth={2}
-            dot={false}
-          />
-        </LineChart>
-      </ResponsiveContainer>
-    </div>
-  );
-};
-
 function App() {
   const mapWrapRef = useRef(null);
   const svgRef = useRef(null);
@@ -576,8 +514,6 @@ function App() {
   const [provinceRows, setProvinceRows] = useState([]);
   const [rbaiIndexMap, setRbaiIndexMap] = useState(() => new Map());
   const [rbaiCategoryMap, setRbaiCategoryMap] = useState(() => new Map());
-  const [yearlyRows, setYearlyRows] = useState([]);
-  const [yearlyStatus, setYearlyStatus] = useState("idle");
   const [selectedProvince, setSelectedProvince] = useState(null);
   const [tooltipContent, setTooltipContent] = useState({
     visible: false,
@@ -702,31 +638,13 @@ function App() {
             setRbaiIndexMap(nextRbaiIndexMap);
             setRbaiCategoryMap(nextRbaiCategoryMap);
           }
-        } catch (error) {
+        } catch {
           if (isMounted) {
             setRbaiIndexMap(new Map());
             setRbaiCategoryMap(new Map());
           }
         }
-
-        try {
-          const yearlyResponse = await fetch("/data/yearly.csv");
-          if (!yearlyResponse.ok) throw new Error("Yearly data not found");
-          const yearlyText = await yearlyResponse.text();
-          const parsedYearly = Papa.parse(yearlyText, {
-            header: true,
-            skipEmptyLines: true,
-          });
-          if (isMounted) {
-            setYearlyRows(parsedYearly.data);
-            setYearlyStatus("ready");
-          }
-        } catch (error) {
-          if (isMounted) {
-            setYearlyStatus("failed");
-          }
-        }
-      } catch (error) {
+      } catch {
         if (isMounted) {
           setLoadError("Failed to load the dashboard data.");
           setIsLoading(false);
@@ -997,6 +915,97 @@ function App() {
     };
   }, [provinceRows]);
 
+  const rankingLabels = useMemo(() => {
+    switch (selectedMetric) {
+      case "gap":
+      case "monetaryGap":
+        return { low: "Most Underfunded", high: "Most Overfunded" };
+      case "moneyGap":
+        return { low: "Damage > Cost", high: "Cost > Damage" };
+      case "rbaiIndex":
+      case "rbaiCategory":
+        return { low: "Under-Allocated", high: "Over-Allocated" };
+      case "damage":
+        return { low: "Lowest Damage", high: "Highest Damage" };
+      case "funding":
+        return { low: "Lowest Funding", high: "Highest Funding" };
+      default:
+        return { low: "Lowest", high: "Highest" };
+    }
+  }, [selectedMetric]);
+
+  const rankingItems = useMemo(() => {
+    return provinceGeometry
+      .map((province) => {
+        const row = provinceDataMap.get(province.id);
+        const rbaiIndex = rbaiIndexMap.get(province.id) ?? null;
+        const rbaiCategory = rbaiCategoryMap.get(province.id) || null;
+        const value = (() => {
+          switch (selectedMetric) {
+            case "gap":
+              return row?.Disparity_Index ?? null;
+            case "monetaryGap":
+              return row?.Monetary_Delta ?? null;
+            case "moneyGap":
+              return row?.Monetary_Gap ?? null;
+            case "damage":
+              return row?.Total_Damage_PhP ?? null;
+            case "funding":
+              return row?.ABC ?? null;
+            case "rbaiIndex":
+            case "rbaiCategory":
+              return rbaiIndex;
+            default:
+              return row?.[METRICS[selectedMetric].key] ?? null;
+          }
+        })();
+
+        if (!Number.isFinite(value)) return null;
+        return {
+          id: province.id,
+          name: province.name,
+          value,
+          category: rbaiCategory,
+        };
+      })
+      .filter(Boolean);
+  }, [
+    provinceGeometry,
+    provinceDataMap,
+    rbaiIndexMap,
+    rbaiCategoryMap,
+    selectedMetric,
+  ]);
+
+  const rankingLists = useMemo(() => {
+    if (!rankingItems.length) return { low: [], high: [] };
+    const sorted = [...rankingItems].sort((a, b) => a.value - b.value);
+    return {
+      low: sorted.slice(0, 5),
+      high: sorted.slice(-5).reverse(),
+    };
+  }, [rankingItems]);
+
+  const formatRankingValue = (item) => {
+    switch (selectedMetric) {
+      case "gap":
+        return item.value.toFixed(1);
+      case "moneyGap":
+        return `${item.value.toFixed(2)}x`;
+      case "monetaryGap":
+        return formatBillions(item.value);
+      case "rbaiIndex":
+        return item.value.toFixed(2);
+      case "rbaiCategory":
+        return item.value.toFixed(2);
+      case "damage":
+      case "funding":
+        return formatBillions(item.value);
+      default:
+        return String(item.value);
+    }
+  };
+
   const provinces = useMemo(() => {
     if (!provinceGeometry.length) return [];
     const metricKey = METRICS[selectedMetric].key;
@@ -1069,46 +1078,6 @@ function App() {
     regionFilter,
   ]);
 
-  const selectedYearlySeries = useMemo(() => {
-    if (!selectedProvince || yearlyStatus !== "ready") return null;
-    const selectedName = normalizeName(selectedProvince.name);
-    const filtered = yearlyRows.filter(
-      (row) => normalizeName(row.Province) === selectedName,
-    );
-    if (!filtered.length) return [];
-    const structured = filtered
-      .map((row) => {
-        const year = row.Year || row.year || row.YEAR;
-        const damage = resolveYearlyValue(row, [
-          "Total_Damage_PhP",
-          "Damage",
-          "Typhoon_Damage",
-        ]);
-        const funding = resolveYearlyValue(row, [
-          "ABC",
-          "Funding",
-          "Flood_Funding",
-        ]);
-        if (!year) return null;
-        return {
-          year: String(year),
-          damage,
-          funding,
-        };
-      })
-      .filter(Boolean);
-
-    const maxValue =
-      d3.max(structured, (row) =>
-        Math.max(row.damage || 0, row.funding || 0),
-      ) || 1;
-    return structured.map((row) => ({
-      year: row.year,
-      damage: row.damage !== null ? (row.damage / maxValue) * 100 : null,
-      funding: row.funding !== null ? (row.funding / maxValue) * 100 : null,
-    }));
-  }, [selectedProvince, yearlyRows, yearlyStatus]);
-
   const handleProvinceClick = (province) => {
     if (province.isNoData) {
       setSelectedProvince({
@@ -1130,35 +1099,56 @@ function App() {
     setSelectedProvince(null);
   };
 
-  const getTooltipValue = (province) => {
-    const metricKey = METRICS[selectedMetric].key;
-    const metricValue = province.row ? province.row[metricKey] : null;
-    if (province.isNoData) return "No data available";
-    if (selectedMetric === "gap") {
-      return metricValue !== null
-        ? `${metricValue.toFixed(1)}`
-        : "No data available";
-    }
-    if (selectedMetric === "moneyGap") {
-      return metricValue !== null
-        ? `${metricValue.toFixed(2)}x`
-        : "No data available";
-    }
-    if (selectedMetric === "monetaryGap") {
-      return metricValue !== null
-        ? formatBillions(metricValue)
-        : "No data available";
-    }
-    if (selectedMetric === "rbaiIndex") {
-      return Number.isFinite(province.rbaiIndex)
-        ? province.rbaiIndex.toFixed(2)
-        : "No data available";
-    }
-    if (selectedMetric === "rbaiCategory") {
-      return province.rbaiCategory || "No data available";
-    }
-    return formatBillions(metricValue);
+  const handleZoom = (factor) => {
+    if (!zoomBehaviorRef.current || !svgRef.current) return;
+    const svg = d3.select(svgRef.current);
+    svg
+      .transition()
+      .duration(200)
+      .call(zoomBehaviorRef.current.scaleBy, factor);
   };
+
+  const handleZoomReset = () => {
+    if (!zoomBehaviorRef.current || !svgRef.current) return;
+    const svg = d3.select(svgRef.current);
+    svg
+      .transition()
+      .duration(200)
+      .call(zoomBehaviorRef.current.transform, d3.zoomIdentity);
+  };
+
+  const getTooltipValue = useCallback(
+    (province) => {
+      const metricKey = METRICS[selectedMetric].key;
+      const metricValue = province.row ? province.row[metricKey] : null;
+      if (province.isNoData) return "No data available";
+      if (selectedMetric === "gap") {
+        return metricValue !== null
+          ? `${metricValue.toFixed(1)}`
+          : "No data available";
+      }
+      if (selectedMetric === "moneyGap") {
+        return metricValue !== null
+          ? `${metricValue.toFixed(2)}x`
+          : "No data available";
+      }
+      if (selectedMetric === "monetaryGap") {
+        return metricValue !== null
+          ? formatBillions(metricValue)
+          : "No data available";
+      }
+      if (selectedMetric === "rbaiIndex") {
+        return Number.isFinite(province.rbaiIndex)
+          ? province.rbaiIndex.toFixed(2)
+          : "No data available";
+      }
+      if (selectedMetric === "rbaiCategory") {
+        return province.rbaiCategory || "No data available";
+      }
+      return formatBillions(metricValue);
+    },
+    [selectedMetric],
+  );
 
   const handleMouseEnter = (province, event) => {
     if (isDraggingRef.current) return;
@@ -1206,7 +1196,7 @@ function App() {
       name: province.name,
       value: getTooltipValue(province),
     });
-  }, [selectedMetric]);
+  }, [getTooltipValue, tooltipContent.visible]);
 
   const detailRow = selectedProvince?.row;
   const detailScore = detailRow?.Disparity_Index ?? null;
@@ -1263,11 +1253,6 @@ function App() {
           </div>
 
           <div className="control-block">
-            <div className="control-label">Map mode</div>
-            <MapToggle value={selectedMetric} onChange={setSelectedMetric} />
-          </div>
-
-          <div className="control-block">
             <div className="control-label">Filter by region</div>
             <select
               className="region-select"
@@ -1284,27 +1269,6 @@ function App() {
           </div>
 
           <Legend metric={selectedMetric} />
-
-          <div className="stats-block">
-            <div className="stat-pill">
-              <span className="stat-label">Most neglected</span>
-              <span className="stat-value">
-                {nationalStats?.mostNeglected?.Province || "No data"}
-              </span>
-            </div>
-            <div className="stat-pill">
-              <span className="stat-label">Most overfunded</span>
-              <span className="stat-value">
-                {nationalStats?.mostOverfunded?.Province || "No data"}
-              </span>
-            </div>
-            <div className="stat-pill">
-              <span className="stat-label">Avg slippage days</span>
-              <span className="stat-value">
-                {nationalStats?.avgSlip ?? "No data"}
-              </span>
-            </div>
-          </div>
         </aside>
 
         <main className="map-area rise-in">
@@ -1364,6 +1328,32 @@ function App() {
                 ))}
               </g>
             </svg>
+            <div className="map-zoom-controls">
+              <button
+                type="button"
+                className="zoom-button"
+                onClick={() => handleZoom(1.2)}
+                aria-label="Zoom in"
+              >
+                +
+              </button>
+              <button
+                type="button"
+                className="zoom-button"
+                onClick={() => handleZoom(0.8)}
+                aria-label="Zoom out"
+              >
+                -
+              </button>
+              <button
+                type="button"
+                className="zoom-button reset"
+                onClick={handleZoomReset}
+                aria-label="Reset zoom"
+              >
+                Reset
+              </button>
+            </div>
             <div
               ref={tooltipRef}
               className={`map-tooltip ${tooltipContent.visible ? "is-visible" : ""}`}
@@ -1378,96 +1368,122 @@ function App() {
           <div className="map-hint">
             Click a province to open the detail panel.
           </div>
+          {selectedProvince && (
+            <section className="detail-panel detail-panel-open">
+              <div className="detail-content">
+                <button
+                  type="button"
+                  className="close-button"
+                  onClick={() => setSelectedProvince(null)}
+                  aria-label="Close details"
+                >
+                  X
+                </button>
+                <h2>{selectedProvince.name}</h2>
+                <div className={`badge ${verdict.className}`}>
+                  {verdict.label}
+                </div>
+                <p className="verdict-text">{verdictSentence}</p>
+
+                <div className="stat-grid">
+                  <div className="stat-card">
+                    <span className="stat-title">Funding Gap Score</span>
+                    <span className="stat-main">
+                      {detailScore !== null
+                        ? detailScore.toFixed(1)
+                        : "No data"}
+                    </span>
+                    <span className="stat-sub">
+                      {detailRank
+                        ? `Rank ${detailRank} of ${gapRanks.total}`
+                        : ""}
+                    </span>
+                  </div>
+                  <div className="stat-card">
+                    <span className="stat-title">Total Typhoon Damage</span>
+                    <span className="stat-main">
+                      {formatBillions(detailRow?.Total_Damage_PhP ?? null)}
+                    </span>
+                  </div>
+                  <div className="stat-card">
+                    <span className="stat-title">Total Flood Budget</span>
+                    <span className="stat-main">
+                      {formatBillions(detailRow?.ABC ?? null)}
+                    </span>
+                  </div>
+                  <div className="stat-card">
+                    <span className="stat-title">Total Projects</span>
+                    <span className="stat-main">
+                      {formatNumber(detailRow?.Total_Projects ?? null)}
+                    </span>
+                  </div>
+                  <div className="stat-card">
+                    <span className="stat-title">Avg Slippage Days</span>
+                    <span className="stat-main">
+                      {detailRow?.Avg_Slippage_Days !== null &&
+                      detailRow?.Avg_Slippage_Days !== undefined
+                        ? `${detailRow.Avg_Slippage_Days.toFixed(1)} days`
+                        : "No data"}
+                    </span>
+                  </div>
+                  <div className="stat-card">
+                    <span className="stat-title">Deaths + Affected</span>
+                    <span className="stat-main">
+                      {detailRow &&
+                      (detailRow.Deaths !== null || detailRow.Affected !== null)
+                        ? `${formatNumber(detailRow.Deaths ?? 0)} deaths / ${formatNumber(
+                            detailRow.Affected ?? 0,
+                          )} affected`
+                        : "No data"}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </section>
+          )}
         </main>
 
-        <aside
-          className={`detail-panel ${
-            selectedProvince ? "detail-panel-open" : "detail-panel-closed"
-          }`}
-          aria-hidden={!selectedProvince}
-        >
-          {selectedProvince && (
-            <div className="detail-content">
-              <button
-                type="button"
-                className="close-button"
-                onClick={() => setSelectedProvince(null)}
-                aria-label="Close details"
-              >
-                X
-              </button>
-              <h2>{selectedProvince.name}</h2>
-              <div className={`badge ${verdict.className}`}>
-                {verdict.label}
-              </div>
-              <p className="verdict-text">{verdictSentence}</p>
-
-              <div className="stat-grid">
-                <div className="stat-card">
-                  <span className="stat-title">Funding Gap Score</span>
-                  <span className="stat-main">
-                    {detailScore !== null ? detailScore.toFixed(1) : "No data"}
-                  </span>
-                  <span className="stat-sub">
-                    {detailRank
-                      ? `Rank ${detailRank} of ${gapRanks.total}`
-                      : ""}
-                  </span>
-                </div>
-                <div className="stat-card">
-                  <span className="stat-title">Total Typhoon Damage</span>
-                  <span className="stat-main">
-                    {formatBillions(detailRow?.Total_Damage_PhP ?? null)}
-                  </span>
-                </div>
-                <div className="stat-card">
-                  <span className="stat-title">Total Flood Budget</span>
-                  <span className="stat-main">
-                    {formatBillions(detailRow?.ABC ?? null)}
-                  </span>
-                </div>
-                <div className="stat-card">
-                  <span className="stat-title">Total Projects</span>
-                  <span className="stat-main">
-                    {formatNumber(detailRow?.Total_Projects ?? null)}
-                  </span>
-                </div>
-                <div className="stat-card">
-                  <span className="stat-title">Avg Slippage Days</span>
-                  <span className="stat-main">
-                    {detailRow?.Avg_Slippage_Days !== null &&
-                    detailRow?.Avg_Slippage_Days !== undefined
-                      ? `${detailRow.Avg_Slippage_Days.toFixed(1)} days`
-                      : "No data"}
-                  </span>
-                </div>
-                <div className="stat-card">
-                  <span className="stat-title">Deaths + Affected</span>
-                  <span className="stat-main">
-                    {detailRow &&
-                    (detailRow.Deaths !== null || detailRow.Affected !== null)
-                      ? `${formatNumber(detailRow.Deaths ?? 0)} deaths / ${formatNumber(
-                          detailRow.Affected ?? 0,
-                        )} affected`
-                      : "No data"}
-                  </span>
-                </div>
-              </div>
-
-              <div className="chart-block">
-                <div className="chart-title">
-                  Yearly damage vs. funding (normalized)
-                </div>
-                {yearlyStatus === "failed" ? (
-                  <div className="mini-chart-empty">
-                    Yearly data not loaded.
-                  </div>
-                ) : (
-                  <MiniChart data={selectedYearlySeries} />
-                )}
-              </div>
+        <aside className="rankings-panel rise-in">
+          <div className="rankings-header">
+            <div className="rankings-title">Rankings</div>
+            <div className="rankings-subtitle">
+              {METRICS[selectedMetric].label}
             </div>
-          )}
+          </div>
+          <div className="rankings-grid">
+            <div className="rankings-column">
+              <div className="rankings-label">{rankingLabels.low}</div>
+              <ol className="rankings-list">
+                {rankingLists.low.map((item) => (
+                  <li className="ranking-item" key={`low-${item.id}`}>
+                    <span className="ranking-name">{item.name}</span>
+                    <span className="ranking-value">
+                      {formatRankingValue(item)}
+                    </span>
+                    {selectedMetric === "rbaiCategory" && item.category && (
+                      <span className="ranking-note">{item.category}</span>
+                    )}
+                  </li>
+                ))}
+              </ol>
+            </div>
+            <div className="rankings-column">
+              <div className="rankings-label">{rankingLabels.high}</div>
+              <ol className="rankings-list">
+                {rankingLists.high.map((item) => (
+                  <li className="ranking-item" key={`high-${item.id}`}>
+                    <span className="ranking-name">{item.name}</span>
+                    <span className="ranking-value">
+                      {formatRankingValue(item)}
+                    </span>
+                    {selectedMetric === "rbaiCategory" && item.category && (
+                      <span className="ranking-note">{item.category}</span>
+                    )}
+                  </li>
+                ))}
+              </ol>
+            </div>
+          </div>
         </aside>
       </div>
     </div>
